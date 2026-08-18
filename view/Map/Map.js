@@ -1,6 +1,7 @@
 import React, { Component } from "react";
 import { StyleSheet, View, Dimensions } from "react-native";
-import MapView from "react-native-maps";
+import MapView, { Marker } from "react-native-maps";
+import CONST from "../CONST/CONST";
 
 const { width, height } = Dimensions.get("window");
 
@@ -9,7 +10,16 @@ const SCREEN_HEIGHT = height;
 const ASPECT_RATIO = SCREEN_WIDTH / SCREEN_HEIGHT;
 const LATITUDE_DELTA = 1;
 const LONGITUDE_DELTA = LATITUDE_DELTA * ASPECT_RATIO;
-const URL = "https://ezwork.vn/ez_sdes";
+
+function parseJson(response) {
+  return response.text().then(text => {
+    try {
+      return JSON.parse(text);
+    } catch (e) {
+      throw new Error("Server did not return JSON");
+    }
+  });
+}
 
 export default class Map extends Component {
   constructor(props) {
@@ -71,18 +81,24 @@ export default class Map extends Component {
 */
 
   componentDidMount() {
+    if (!CONST.USE_BACKEND) {
+      this.setState({ markers: CONST.DEMO_MARKERS });
+      return;
+    }
+
     let collection = {};
     (collection.sessionid = this.props.sessionid),
       (collection.are_parent = "R.1"),
 
-      fetch(URL + "/area/getareabranchbyparentweb", {
+      fetch(CONST.URL + "/area/getareabranchbyparent", {
         method: "POST", // or 'PUT'
         body: JSON.stringify(collection), // data can be `string` or {object}!
         headers: {
-          "Content-Type": "application/json"
+          "Content-Type": "application/json",
+          Accept: "application/json"
         }
       })
-        .then(response => response.json())
+        .then(parseJson)
         .then(response => {
           if (response.code == 200) { 
             for (let i = 0; i < response.result.length; i++) {
@@ -98,17 +114,18 @@ export default class Map extends Component {
 
   myFunction(obj_id, are_name, index) {
     // get 1 địa điểm
-    fetch(URL + "/property/getpropertybyobjid", {
+    fetch(CONST.URL + "/property/getpropertybyobjid", {
       method: "POST", // or 'PUT'
       body: JSON.stringify({
         sessionid: this.props.sessionid, 
         obj_id: obj_id
       }),
       headers: {
-        "Content-Type": "application/json"
+        "Content-Type": "application/json",
+        Accept: "application/json"
       }
     })
-      .then(response => response.json())
+      .then(parseJson)
       .then(response => {
         if (response.code == 200) {
           var lat;
@@ -143,12 +160,11 @@ export default class Map extends Component {
       <View style={styles.container}>
         <MapView style={styles.map} region={this.state.initialPosition}>
           {this.state.markers.map((marker, index) => (
-            <MapView.Marker
+            <Marker
               key={index}
               coordinate={marker.coordinates}
               title={marker.title}
-            >
-            </MapView.Marker>
+            />
           ))}
         </MapView>
       </View>

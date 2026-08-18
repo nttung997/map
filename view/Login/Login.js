@@ -1,6 +1,7 @@
 import React, { Component } from "react";
 import {
   Image,
+  Keyboard,
   KeyboardAvoidingView,
   StyleSheet,
   Text,
@@ -11,14 +12,43 @@ import {
 } from "react-native";
 
 import Map from "../Map/Map";
+import CONST from "../CONST/CONST";
+
+function parseJson(response) {
+  return response.text().then(text => {
+    try {
+      return JSON.parse(text);
+    } catch (e) {
+      throw new Error("Server did not return JSON");
+    }
+  });
+}
 
 export default class Login extends Component {
   constructor() {
     super();
     this.state = {
       password: "",
-      username: ""
+      username: "",
+      loggedIn: false,
+      error: "",
+      sessionid: null,
+      keyboardVisible: false
     };
+  }
+  componentDidMount() {
+    this.keyboardDidShowListener = Keyboard.addListener(
+      "keyboardDidShow",
+      () => this.setState({ keyboardVisible: true })
+    );
+    this.keyboardDidHideListener = Keyboard.addListener(
+      "keyboardDidHide",
+      () => this.setState({ keyboardVisible: false })
+    );
+  }
+  componentWillUnmount() {
+    this.keyboardDidShowListener.remove();
+    this.keyboardDidHideListener.remove();
   }
   updateValue(text, field) {
     if (field == "username") {
@@ -28,75 +58,92 @@ export default class Login extends Component {
     }
   }
   submit() {
-    let collection = {};
-    (collection.user_name = this.state.username),
-      (collection.user_pwd = this.state.password),
-      (collection.device_type = "web"),
-      (collection.app = "sdes");
+    this.setState({ error: "" });
 
-    const URL = "https://ezwork.vn/ez_sdes";
+    if (!CONST.USE_BACKEND) {
+      this.setState({ loggedIn: true, sessionid: "demo" });
+      return;
+    }
 
-    fetch(URL + "/user/login", {
-      method: "POST", // or 'PUT'
-      body: JSON.stringify(collection), // data can be `string` or {object}!
+    const collection = {
+      usr_name: this.state.username,
+      usr_pwd: this.state.password,
+      device_type: "web",
+      app: "sdes"
+    };
+
+    fetch(CONST.URL + "/user/login", {
+      method: "POST",
+      body: JSON.stringify(collection),
       headers: {
-        "Content-Type": "application/json"
+        "Content-Type": "application/json",
+        Accept: "application/json"
       }
     })
-      .then(response => response.json())
+      .then(parseJson)
       .then(response => {
         if (response.code == 200) {
-          this.setState({ sessionid: response.sessionid });
-          this.setState({ login: true });
+          this.setState({
+            sessionid: response.sessionid,
+            loggedIn: true,
+            error: ""
+          });
         } else {
-          console.log(response);
-          this.setState({ login: response.description });
+          this.setState({
+            error: response.description || "Login failed"
+          });
         }
       })
-      .catch(error => console.error("Error:", error));
+      .catch(error => {
+        console.error("Error:", error);
+        this.setState({ error: "Không kết nối được máy chủ" });
+      });
   }
   render() {
-    if (!this.state.login) {
+    if (!this.state.loggedIn) {
       return (
         <KeyboardAvoidingView behavior="padding" style={styles.container}>
-          
+          {!this.state.keyboardVisible && (
             <View style={styles.logo_container}>
               <Image
                 style={styles.logo}
                 source={require("../../Image/anh.png")}
               />
             </View>
-            <View style={styles.login_form}>
-              <View style={{ flex: 1 }} />
-              <View style={styles.login_form_container}>
-                <StatusBar barStyle="light-content" />
-                <TextInput
-                  style={styles.input}
-                  placeholder="username"
-                  onChangeText={text => this.updateValue(text, "username")}
-                  returnKeyType="next"
-                  onSubmitEditing={() => this.passwordInput.focus()}
-                  keyboardType="email-address"
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                />
-                <TextInput
-                  style={styles.input}
-                  placeholder="password"
-                  onChangeText={text => this.updateValue(text, "password")}
-                  secureTextEntry
-                  returnKeyType="go"
-                  ref={input => (this.passwordInput = input)}
-                />
-                <TouchableOpacity
-                  onPress={() => this.submit()}
-                  style={styles.buttonContainer}
-                >
-                  <Text style={styles.buttonText}>LOGIN</Text>
-                </TouchableOpacity>
-              </View>
+          )}
+          <View style={styles.login_form}>
+            <View style={styles.login_form_container}>
+              <StatusBar barStyle="light-content" />
+              <TextInput
+                style={styles.input}
+                placeholder="username"
+                onChangeText={text => this.updateValue(text, "username")}
+                returnKeyType="next"
+                onSubmitEditing={() => this.passwordInput.focus()}
+                keyboardType="email-address"
+                autoCapitalize="none"
+                autoCorrect={false}
+              />
+              <TextInput
+                style={styles.input}
+                placeholder="password"
+                onChangeText={text => this.updateValue(text, "password")}
+                secureTextEntry
+                returnKeyType="go"
+                onSubmitEditing={() => this.submit()}
+                ref={input => (this.passwordInput = input)}
+              />
+              <TouchableOpacity
+                onPress={() => this.submit()}
+                style={styles.buttonContainer}
+              >
+                <Text style={styles.buttonText}>LOGIN</Text>
+              </TouchableOpacity>
+              {!!this.state.error && (
+                <Text style={styles.errorText}>{this.state.error}</Text>
+              )}
             </View>
-          
+          </View>
         </KeyboardAvoidingView>
       );
     } else {
@@ -112,20 +159,20 @@ const styles = StyleSheet.create({
   },
   logo_container: {
     alignItems: "center",
-    flexGrow: 1,
-    justifyContent: "flex-start"
+    justifyContent: "flex-start",
+    paddingTop: 16
   },
   logo: {
-    flex: 1,
-    width: "100%",
-    resizeMode: "stretch"
+    width: "50%",
+    aspectRatio: 2.2,
+    resizeMode: "contain"
   },
   login_form: {
-    flex: 2
+    flex: 1,
+    justifyContent: "flex-end"
   },
   login_form_container: {
-    padding: 20,
-    flex: 2
+    padding: 20
   },
   input: {
     height: 80,
@@ -142,5 +189,10 @@ const styles = StyleSheet.create({
     textAlign: "center",
     color: "#fff",
     fontWeight: "700"
+  },
+  errorText: {
+    marginTop: 12,
+    color: "#fff",
+    textAlign: "center"
   }
 });
