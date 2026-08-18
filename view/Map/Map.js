@@ -1,7 +1,16 @@
 import React, { Component } from "react";
-import { StyleSheet, View, Dimensions } from "react-native";
+import {
+  StyleSheet,
+  View,
+  Dimensions,
+  Text,
+  TouchableOpacity
+} from "react-native";
 import MapView, { Marker } from "react-native-maps";
+import * as Location from "expo-location";
 import CONST from "../CONST/CONST";
+
+const MARKER_IMAGE = require("../../Image/36722673_1023944331106468_2782270902291660800_n.png");
 
 const { width, height } = Dimensions.get("window");
 
@@ -21,15 +30,56 @@ function parseJson(response) {
   });
 }
 
+function isPlacedMarker(marker) {
+  return (
+    marker &&
+    marker.coordinates &&
+    !isNaN(marker.coordinates.latitude) &&
+    !isNaN(marker.coordinates.longitude)
+  );
+}
+
+function regionContaining(markers) {
+  const PADDING = 1.3;
+  const MIN_DELTA = 0.05;
+
+  let minLat = markers[0].coordinates.latitude;
+  let maxLat = minLat;
+  let minLng = markers[0].coordinates.longitude;
+  let maxLng = minLng;
+
+  for (let i = 1; i < markers.length; i++) {
+    const { latitude, longitude } = markers[i].coordinates;
+    if (latitude < minLat) minLat = latitude;
+    if (latitude > maxLat) maxLat = latitude;
+    if (longitude < minLng) minLng = longitude;
+    if (longitude > maxLng) maxLng = longitude;
+  }
+
+  const latitude = (minLat + maxLat) / 2;
+  const longitude = (minLng + maxLng) / 2;
+  let latitudeDelta = Math.max((maxLat - minLat) * PADDING, MIN_DELTA);
+  let longitudeDelta = Math.max((maxLng - minLng) * PADDING, MIN_DELTA);
+
+  if (longitudeDelta < latitudeDelta * ASPECT_RATIO) {
+    longitudeDelta = latitudeDelta * ASPECT_RATIO;
+  } else {
+    latitudeDelta = longitudeDelta / ASPECT_RATIO;
+  }
+
+  return { latitude, longitude, latitudeDelta, longitudeDelta };
+}
+
 export default class Map extends Component {
   constructor(props) {
     super(props);
     this.state = {
-      markers: [
-      ],
+      markers: [],
+      userLocation: null,
+      selectedMarker: null,
       initialPosition: {
-        latitude: 15.082304, 
-        longitude: 108.095521, 
+        latitude: 15.082304,
+        longitude: 108.095521,
         latitudeDelta: LATITUDE_DELTA,
         longitudeDelta: LONGITUDE_DELTA
       }
@@ -80,9 +130,16 @@ export default class Map extends Component {
   }
 */
 
+  locationSubscription = null;
+
   componentDidMount() {
+    this.startLocationUpdates();
+
     if (!CONST.USE_BACKEND) {
-      this.setState({ markers: CONST.DEMO_MARKERS });
+      const markers = CONST.DEMO_MARKERS;
+      this.setState({ markers }, () => {
+        this.fitToMarkers(markers);
+      });
       return;
     }
 
@@ -100,7 +157,7 @@ export default class Map extends Component {
       })
         .then(parseJson)
         .then(response => {
-          if (response.code == 200) { 
+          if (response.code == 200) {
             for (let i = 0; i < response.result.length; i++) {
               this.myFunction(response.result[i].obj_id,response.result[i].are_name,i);
             }
@@ -109,7 +166,61 @@ export default class Map extends Component {
           }
         })
         .catch(error => console.error("Error:", error));
-        
+  }
+
+  componentWillUnmount() {
+    this.isUnmounted = true;
+    if (this.locationSubscription) {
+      this.locationSubscription.remove();
+    }
+  }
+
+  startLocationUpdates() {
+    Location.requestForegroundPermissionsAsync()
+      .then(({ status }) => {
+        if (status !== "granted") {
+          return null;
+        }
+        return Location.getCurrentPositionAsync({}).then(location => {
+          this.setUserLocation(location);
+          return Location.watchPositionAsync(
+            {
+              accuracy: Location.Accuracy.Balanced,
+              distanceInterval: 10
+            },
+            loc => this.setUserLocation(loc)
+          );
+        });
+      })
+      .then(subscription => {
+        if (this.isUnmounted) {
+          if (subscription) {
+            subscription.remove();
+          }
+          return;
+        }
+        if (subscription) {
+          this.locationSubscription = subscription;
+        }
+      })
+      .catch(error => console.error("Location:", error));
+  }
+
+  setUserLocation(location) {
+    this.setState({
+      userLocation: {
+        latitude: location.coords.latitude,
+        longitude: location.coords.longitude
+      }
+    });
+  }
+
+  fitToMarkers(markers) {
+    const placed = markers.filter(isPlacedMarker);
+    if (!placed.length || !this.mapRef) {
+      return;
+    }
+    this.mapRef.animateToRegion(regionContaining(placed));
   }
 
   myFunction(obj_id, are_name, index) {
@@ -117,7 +228,7 @@ export default class Map extends Component {
     fetch(CONST.URL + "/property/getpropertybyobjid", {
       method: "POST", // or 'PUT'
       body: JSON.stringify({
-        sessionid: this.props.sessionid, 
+        sessionid: this.props.sessionid,
         obj_id: obj_id
       }),
       headers: {
@@ -147,26 +258,63 @@ export default class Map extends Component {
             index: index + 1,
             title: are_name
           };
-          this.state.markers[index] = x;
+          const markers = this.state.markers.slice();
+          markers[index] = x;
 
-          this.setState({ markers: this.state.markers });
+          this.setState({ markers }, () => {
+            this.fitToMarkers(markers);
+          });
         }
       })
       .catch(error => console.error("myError:", error));
   }
 
+  onMapPress(event) {
+    if (event.nativeEvent.action === "marker-press") {
+      return;
+    }
+    this.setState({ selectedMarker: null });
+  }
+
   render() {
+    const { selectedMarker } = this.state;
+
     return (
-      <View style={styles.container}>
-        <MapView style={styles.map} region={this.state.initialPosition}>
-          {this.state.markers.map((marker, index) => (
+      <View style={styles.container} pointerEvents="box-none">
+        <MapView
+          ref={ref => {
+            this.mapRef = ref;
+          }}
+          style={styles.map}
+          initialRegion={this.state.initialPosition}
+          showsUserLocation
+          onPress={event => this.onMapPress(event)}
+        >
+          {this.state.markers.filter(isPlacedMarker).map((marker, index) => (
             <Marker
               key={index}
               coordinate={marker.coordinates}
-              title={marker.title}
+              image={MARKER_IMAGE}
+              anchor={{ x: 0.5, y: 1 }}
+              onPress={() => this.setState({ selectedMarker: marker })}
             />
           ))}
         </MapView>
+        {selectedMarker && (
+          <View style={styles.detailsCard}>
+            <TouchableOpacity
+              style={styles.detailsClose}
+              onPress={() => this.setState({ selectedMarker: null })}
+            >
+              <Text style={styles.detailsCloseText}>X</Text>
+            </TouchableOpacity>
+            <Text style={styles.detailsTitle}>{selectedMarker.title}</Text>
+            <Text style={styles.detailsCoords}>
+              {selectedMarker.coordinates.latitude.toFixed(6)},{" "}
+              {selectedMarker.coordinates.longitude.toFixed(6)}
+            </Text>
+          </View>
+        )}
       </View>
     );
   }
@@ -187,5 +335,44 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     bottom: 0
+  },
+  detailsCard: {
+    position: "absolute",
+    left: 16,
+    right: 16,
+    bottom: 24,
+    backgroundColor: "#fff",
+    paddingTop: 16,
+    paddingBottom: 16,
+    paddingHorizontal: 16,
+    borderRadius: 8,
+    elevation: 4,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 4
+  },
+  detailsClose: {
+    position: "absolute",
+    top: 8,
+    right: 8,
+    padding: 8,
+    zIndex: 1
+  },
+  detailsCloseText: {
+    color: "rgba(41, 128, 185, 1.0)",
+    fontWeight: "700",
+    fontSize: 16
+  },
+  detailsTitle: {
+    fontSize: 16,
+    fontWeight: "700",
+    color: "#333",
+    paddingRight: 24,
+    marginBottom: 8
+  },
+  detailsCoords: {
+    fontSize: 14,
+    color: "#555"
   }
 });

@@ -21,6 +21,14 @@
         "backgroundColor": "#ffffff"
       },
       "softwareKeyboardLayoutMode": "resize"
-    }
+    },
+    "plugins": [
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "Show your location on the map."
+        }
+      ]
+    ]
   }
 }
